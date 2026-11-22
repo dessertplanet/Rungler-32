@@ -1,0 +1,20 @@
+# build output (release .syx files are attached to GitHub releases, not committed)
+build/
+*.out
+*.obj
+*.map
+*.asm
+*.bin
+*.syx
+*.hex
+__pycache__/
+*.pyc
+.DS_Store
+# never commit anything from a development or research tree
+analysis*/
+backup*/
+dumps/
+captures/
+*.pdf
+*.zip
+*.jsonl
