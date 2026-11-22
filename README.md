@@ -3,6 +3,7 @@
 Alternative firmware for the Moog Mother-32 that turns its sequencer into a Rungler-style chaotic shift
 register and adds a tape-style digital delay on the TEMPO CV input.
 
+> [!CAUTION]
 > **Unofficial.** Rungler-32 is not made, endorsed or supported by Moog Music. Installing it replaces the
 > factory firmware (you can put that back at any time, see below). Use it at your own risk; see the
 > license for the warranty disclaimer.
