@@ -114,6 +114,9 @@ that keeps build output and stray files out of the repository.
   circuit.
 - Tom Whitwell's [Turing Machine](https://musicthing.co.uk/Turing-Machine/) (Music Thing Modular), a
   looping random shift register, also helped inspire the sequencer.
+- Chris Johnson's [ComputerCard.h](https://github.com/TomWhitwell/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard)
+  framework for the Workshop System Computer, which much of the hardware API in `firmware/Mother32.h` is
+  based on.
 - The delay's ADPCM storage follows the approach of my
   [MLRws card](https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/15_MLRws) for the
   Music Thing Modular Workshop System Computer; the codec is standard IMA ADPCM.

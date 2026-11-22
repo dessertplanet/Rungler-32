@@ -3,7 +3,10 @@
  * Unofficial: not made, endorsed or supported by Moog Music. Part of Rungler-32.
  * Copyright (C) 2026 Dune Desormeaux (@Dessertplanet). SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Usage (same shape as a fixed-rate callback framework):
+ * The API is based on Chris Johnson's ComputerCard.h (MIT) for the Music Thing Modular Workshop System
+ * Computer: https://github.com/TomWhitwell/Workshop_Computer
+ *
+ * Usage (same shape as ComputerCard: a fixed-rate Process() callback):
  *
  *     #include "Mother32.h"
  *     class MyFirmware : public Mother32 {
