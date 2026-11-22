@@ -106,8 +106,12 @@ that keeps build output and stray files out of the repository.
 
 ## Credits
 
+- Moog Music, for the Mother-32: an inspiring instrument with a classic sound that I love to bits.
+  (Rungler-32 is still an unofficial project; see the note at the top.)
 - The Rungler is Rob Hordijk's design (Benjolin, Blippoo Box). This is a homage, not a recreation of his
   circuit.
+- Tom Whitwell's [Turing Machine](https://musicthing.co.uk/Turing-Machine/) (Music Thing Modular), a
+  looping random shift register, also helped inspire the sequencer.
 - The delay's ADPCM storage follows the approach of my
   [MLRws card](https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/15_MLRws) for the
   Music Thing Modular Workshop System Computer; the codec is standard IMA ADPCM.
