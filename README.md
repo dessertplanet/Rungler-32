@@ -5,8 +5,9 @@ register and adds a tape-style digital delay on the TEMPO CV input.
 
 > [!CAUTION]
 > **Unofficial.** Rungler-32 is not made, endorsed or supported by Moog Music. Installing it replaces the
-> factory firmware (you can put that back at any time, see below). Use it at your own risk; see the
-> license for the warranty disclaimer.
+> factory firmware (you can put that back at any time, see below). Use it at your own risk: it comes with
+> no warranty (see sections 15 and 16 of the [license](LICENSE)), and installing third-party firmware may
+> affect your Moog warranty.
 
 ## What it does
 
