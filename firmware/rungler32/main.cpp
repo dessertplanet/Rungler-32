@@ -36,17 +36,18 @@
 //    1.9x), so turning it bends the pitch of what is playing. GLIDE is also the comparator threshold.
 //  - Clock sync: while a clock (2.5 ms .. 4 s period) arrives on the RESET input jack (an edge within twice its
 //    period + 0.25 s), the period is measured from exact edge times, averaged over the last 150 ms, so a clock
-//    whose rate is modulated (e.g. by a slow LFO) gives chorus/vibrato, frozen or not; the
+//    whose rate is modulated (e.g. by a slow LFO) gives chorus/vibrato, with the delay buffer frozen or not; the
 //    delay is that period times a fraction picked by GLIDE (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2), halved
 //    until it fits in 0.52 s. RESET still feeds the shift register's XOR as well.
 //  - SHIFT + arrows: feedback, 25 levels (0 = single repeat ... 100%), shown on the octave LEDs while SHIFT is
 //    held and for 1.5 s after a change: a green bar (1-8), then yellow (9-16) and red (17-24) rolling in from
 //    the right; all red = 100% (the line then holds forever and new input piles up into saturation).
 //    Build with -DDELAY_NO_FEEDBACK for a version without internal feedback.
-//  - HOLD input jack high: freeze. Writing stops and the last delay-time's worth of sound loops, unchanged (no
+//  - HOLD input jack high: delay buffer freeze. Writing stops and the last delay-time's worth of sound loops, unchanged (no
 //    re-encoding). GLIDE and the RESET clock sync still set the delay time: the loop is replayed so that one pass
-//    lasts that time, which repitches it (speed = delay time at the freeze / current delay time, 1/4x .. 4x,
-//    gliding). The seven non-selected octave LEDs flash green. Releasing HOLD resumes the delay where it stopped.
+//    lasts that time, which repitches it (speed = delay time at the start of the freeze / current delay time, 1/4x .. 4x,
+//    gliding). The seven non-selected octave LEDs light green while HOLD is high, and return to dark (or to
+//    the loop-lock yellow when loop lock is on) when it goes low. Releasing HOLD resumes the delay where it stopped.
 //
 //  Storage: 4-bit IMA ADPCM (as in my MLRws Workshop Computer card), four samples per word, in L0 and
 //  in the 1,328 words the bootloader's flash routines occupy after boot (.bootram; the framework copies
@@ -144,7 +145,7 @@ public:
           resetCnt_(0), resetSeen_(false), lastResetEdge_(0), syncPeriod_(0), periodQ4_(0), ringIdx_(0), histN_(0),
           clkInc_(kClockBaseInc), clkPhase_(0), clkOn_(false), clkRestart_(false), clkHigh_(false), gatePrev_(false),
           lastActive_(0), everActive_(false), rng_(0x2545F491UL),
-          octave_(0), shiftUsed_(false), fbShowUntil_(0), fbView_(false), dispDirty_(true), blinkOn_(false), ovSeen_(0), ovShowUntil_(0), ovView_(false),
+          octave_(0), shiftUsed_(false), fbShowUntil_(0), fbView_(false), dispDirty_(true), freezeGreen_(false), ovSeen_(0), ovShowUntil_(0), ovView_(false),
           noteCount_(0), lastNote_(60), midiOwnsKB_(false), bend_(0), envPrev_(false), gatePrevOut_(false), holdPrev_(false),
           pendKeys_(0), activeKeys_(0), keyPulse_(false), keyPulseUntil_(0), asrLive_(false),
           midiTick_(0), midiGate_(false), lastMidiClock_(0), midiClockSeen_(false),
@@ -208,7 +209,7 @@ private:
     bool shiftUsed_;            // an arrow was pressed while SHIFT was held (then releasing SHIFT does nothing)
     uint32_t fbShowUntil_;      // show the feedback level on the octave LEDs until this tick
     bool fbView_, dispDirty_;
-    bool blinkOn_;              // freeze flash phase (octave LEDs)
+    bool freezeGreen_;          // octave LEDs showing delay buffer freeze green
     uint16_t ovSeen_; uint32_t ovShowUntil_; bool ovView_;   // tick-overrun warning
     // MIDI (main loop): held notes, last-note priority; they own KB while held
     int16_t notes_[8];
@@ -387,8 +388,8 @@ private:
     void ShowOctave()
     {
         // loop lock: the other seven LEDs are lit yellow
-        // freeze: they flash green (alternating with the loop-lock yellow when that is on too)
-        Colour other = (frozen_ && blinkOn_) ? Green : (locked_ ? Amber : Off);
+        // delay buffer freeze: they light green, replacing the loop-lock yellow while it lasts
+        Colour other = freezeGreen_ ? Green : (locked_ ? Amber : Off);
         for (int16_t i = 0; i < 8; i++) StepLED(i, i == octave_ + 4 ? Red : other);
     }
 
@@ -491,8 +492,10 @@ private:
         if (!active && pendKeys_) { keysNew = ApplyKeys(held); AsrOutput(); }
 
         // octave LEDs: the feedback level while SHIFT is held or just after a change, otherwise the octave
-        bool blink = frozen_ && ((Ticks() / (kTickHz / 4)) & 1) == 0;      // 2 Hz flash while frozen
-        if (blink != blinkOn_) { blinkOn_ = blink; dispDirty_ = true; }
+        // delay buffer freeze (HOLD jack high): green while it lasts, over the loop-lock yellow (or dark) otherwise.
+        // Redrawn whenever it changes, so the LEDs follow the jack.
+        bool green = frozen_;
+        if (green != freezeGreen_) { freezeGreen_ = green; dispDirty_ = true; }
         bool fbView = shift || (int32_t)(fbShowUntil_ - Ticks()) > 0;
         // a tick overrun (hard real time broken) lights all eight octave LEDs red for 1 s
         uint16_t ov = Overruns();
@@ -524,7 +527,7 @@ private:
         if (keyPulse_ && (int32_t)(keyPulseUntil_ - Ticks()) <= 0) keyPulse_ = false;
         bool gateOut = asrHigh || noteCount_ > 0 || activeKeys_ || keyPulse_;
         bool hold = JackHigh(HoldJack);
-        frozen_ = hold;                                          // HOLD jack also freezes the delay
+        frozen_ = hold;                                          // HOLD jack also freezes the delay buffer
         bool env = gateOut || hold;
         if (gateOut != gatePrevOut_) { Gate(gateOut); gatePrevOut_ = gateOut; }
         bool retrig = (clocked && asrHigh) || keysNew || (hold && !holdPrev_);
