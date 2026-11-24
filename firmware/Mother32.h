@@ -153,7 +153,8 @@ protected:
     // Marks this firmware invalid and resets, so the synth's bootloader waits for a SysEx firmware
     // update. Called automatically when the ERASE message F0 04 14 11 F7 arrives on MIDI IN, so the
     // official update procedure (ERASE twice, then the firmware file) works with this firmware installed.
-    // Returns false (and does nothing) if the bootloader's flash routines cannot be verified in RAM.
+    // Returns false (and does nothing) if the bootloader is not the exact one this was tested with
+    // (CRC-32 of sector A), or its flash routines cannot be verified in RAM.
     static bool EnterUpdateMode();
 
     // ---- time ---------------------------------------------------------------------
@@ -480,6 +481,25 @@ static void Mother32_CopyRamfuncs(void)
 #define M32_FAPI_SCALE    0x0D04        // Flash_CPUScaleFactor (u32, PIE reserved slot)
 #define M32_FAPI_CALLBACK 0x0D02        // Flash_CallbackPtr (u32)
 #define M32_SECTOR_D      0x0008        // the only sector this code ever erases
+#define M32_BOOT_SECTOR   0x3F6000UL    // sector A: the whole bootloader, which never writes it
+#define M32_BOOT_WORDS    0x2000
+#define M32_BOOT_CRC      0xDE606C08UL  // CRC-32 (zlib) of sector A, low byte of each word first
+
+// CRC-32 of the bootloader sector. The addresses above are only valid for the bootloader Rungler-32 was
+// tested with; on any other (a different hardware revision, say) update mode is refused instead of
+// calling into unknown code. Runs before any flash is written, so it may stay in flash.
+static uint32_t Mother32_BootloaderCrc(void)
+{
+    uint32_t crc = 0xFFFFFFFFUL;
+    for (uint16_t i = 0; i < M32_BOOT_WORDS; i++) {
+        uint16_t w = *(volatile uint16_t *)(M32_BOOT_SECTOR + i);
+        crc ^= (w & 0x00FF);
+        for (uint16_t b = 0; b < 8; b++) crc = (crc >> 1) ^ (0xEDB88320UL & (0UL - (crc & 1)));
+        crc ^= (w >> 8);
+        for (uint16_t b = 0; b < 8; b++) crc = (crc >> 1) ^ (0xEDB88320UL & (0UL - (crc & 1)));
+    }
+    return ~crc;
+}
 
 typedef uint16_t (*Mother32_FapiVersionFn)(void);
 typedef uint16_t (*Mother32_FapiEraseFn)(uint16_t mask, uint16_t *status);
@@ -493,6 +513,8 @@ static bool Mother32_InvalidateAppAndReset(void)
     // (their master copy is only read). Not when the stack itself lives in this area.
     volatile uint16_t here = 0;
     if ((uint32_t)&here < 0x0570UL) { asm(" CLRC INTM"); return false; }
+    // only the exact bootloader this was tested with; checked before anything is copied or called
+    if (Mother32_BootloaderCrc() != M32_BOOT_CRC) { asm(" CLRC INTM"); return false; }
     for (uint16_t i = 0; i < M32_FAPI_WORDS; i++)
         M32_R16(M32_FAPI_RAM + i) = *(volatile uint16_t *)(M32_FAPI_FLASH + i);
     // the RAM copy must match its master copy exactly, or we must not call it
