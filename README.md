@@ -25,7 +25,9 @@ internal clock.
   fully clockwise it repeats every *L* steps (*L* = the length), fully anticlockwise every 2*L* steps
   (the second pass inverted).
 - **Lower-row keys 1 to 8** set the length (key *n* = *n* bits); their LEDs show the bits.
-- **KB out:** the active bits as a number, scaled to 0 to +2 V and quantised to C major by default.
+- **KB out:** the active bits as a number, spread over the output's whole range (about -5.4 to
+  +5.1 V), then attenuated toward 0 V by **SCALE** (50% by default, so about -2.7 to +2.55 V) and
+  quantised to C major by default. Hold **SHIFT** and turn **TEMPO** to set SCALE.
   Tap **SHIFT** on its own to toggle quantisation (TEMPO LED green = on, red = off). The **arrows**
   transpose by octaves, shown as one red octave LED.
 - **GATE out and envelope:** high while the last active bit is set, while a key is held, or while
@@ -83,7 +85,7 @@ pattern.
 
 | Output | Rungler-32 |
 |---|---|
-| **KB** (*Sequencer out*) | The active bits as a number, 0 to +2 V (two octaves), quantised to C major by default, plus the octave transpose. A held MIDI note replaces it (1 V/oct, MIDI note 60 = 0 V) until the next clock with no note held. Uses the unit's factory calibration. |
+| **KB** (*Sequencer out*) | The active bits as a number, mapped to the whole output range (about -5.4 to +5.1 V) and attenuated toward 0 V by SCALE (default 50%). Then quantised to C major by default (each note rounded to the nearest semitone, then down to a C major note), plus the octave transpose. The output clips at its limits, so with SCALE high an octave transpose pushes the outer notes into the ends. A held MIDI note replaces it (1 V/oct, MIDI note 60 = 0 V) until the next clock with no note held. Uses the unit's factory calibration. |
 | **GATE** out (*Last bit output*) | High while the last active bit is set (from the first clock on), while any key is held, or while a MIDI note is held. A key tapped while the sequencer runs gives a 10 ms gate on the next clock. |
 | **EG** | The envelope opens with GATE out or the HOLD input. Retriggered by a clock that leaves the last bit set, a new key press, a HOLD rising edge, or a new MIDI note (SUSTAIN off). SUSTAIN off = trigger (attack/decay), on = held. |
 | **ASSIGN** (*Delay out*) | The delayed signal only (wet). Patch into EXT AUDIO and use MIX for dry + wet. |
@@ -93,7 +95,7 @@ pattern.
 
 | Control | Rungler-32 |
 |---|---|
-| **TEMPO** (*Internal clock rate*) | Internal clock rate, 0.25 Hz to 1 kHz (exponential). |
+| **TEMPO** (*Internal clock rate*) | Internal clock rate, 0.25 Hz to 1 kHz (exponential). With SHIFT held: SCALE (see below). |
 | **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: 0.33 ms to about 0.52 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2, halved until it fits). **Flip chance**: the threshold of the noise comparator, so turning it clockwise makes a step less likely to flip the first bit. **Pattern lock** at the ends, whatever the jacks do: fully clockwise the pattern repeats every *L* steps (*L* = the length); fully anticlockwise the first bit flips every step, so it repeats every 2*L* steps with the second pass inverted. GLIDE no longer glides the pitch. |
 | **SUSTAIN** | Envelope held (on) or triggered (off). With MIDI: legato (on) or retrigger per note (off). |
 
@@ -104,7 +106,8 @@ pattern.
 | Lower-row keys **1** to **8** (*Shift register length (1-8)*) | Key *n* sets the length to *n* bits. Their LEDs show the active bits. Holding a key also holds GATE out and fires the envelope. |
 | Upper-row keys **1-8**, **9-16**, **17-24**, **25-32**, **SET END** (*Unused*) | No sequencer function. Holding one still holds GATE out and fires the envelope, like any key. |
 | **◀ / ▶** arrows (*Octave down/up*) | Transpose KB by octaves, -4 to +3. |
-| **SHIFT** tapped alone (*Toggle quantize*) | Quantisation on/off (TEMPO LED green = on, red = off). |
+| **SHIFT** tapped alone (*Toggle quantize*) | Quantisation on/off when SHIFT is released within 0.5 s; a longer press does nothing (TEMPO LED green = on, red = off). |
+| **SHIFT** + **TEMPO** | SCALE: attenuation of KB, 0 to 100% (default 50%), shown on the octave LEDs. Hard takeover: once TEMPO has turned a little way from where it was when SHIFT went down, SCALE jumps to the knob's position and follows it (TEMPO fully clockwise = 100%). The clock keeps its rate while SHIFT is held, and after release takes TEMPO back the same way: it stays put until TEMPO turns a little way from where it was at release, then jumps to the knob's position. |
 | **SHIFT** + **◀ / ▶** | Delay feedback, 25 levels, inverted (each repeat flips polarity): 0 = a single repeat, top = 100% (the loop holds forever and new input piles up into saturation). |
 | **RUN/STOP** (*Start/stop internal clock*) | Internal clock on/off. While on, incoming MIDI clock replaces it. |
 | **HOLD** (*Toggle locked loop*) | Loop lock on/off: each clock only rotates the bits, so the pattern repeats unchanged. |
@@ -118,7 +121,7 @@ the next clock; releases act at once. Otherwise presses act at once.
 | LED | Rungler-32 |
 |---|---|
 | Key LEDs **1** to **8** | The active bits. |
-| **OCTAVE / LOCATION** 1 to 8 | One red LED: the octave (LED 5 = no transpose). The other seven: dark, yellow with loop lock on, green while the HOLD input is high (delay buffer freeze). While SHIFT is held, and for 1.5 s after a change: the feedback level as a bar (green 1-8, yellow 9-16, red 17-24). All eight red for 1 s: the firmware ran out of processing time. |
+| **OCTAVE / LOCATION** 1 to 8 | One red LED: the octave (LED 5 = no transpose). The other seven: dark, yellow with loop lock on, green while the HOLD input is high (delay buffer freeze). While SHIFT is held, and for 1.5 s after a change: SCALE as a green bar, each LED 12.5%, with a yellow LED for a half step at its end (four green = 50%). After SHIFT + an arrow, for the rest of that SHIFT hold and 1.5 s after: the feedback level as a bar instead (green 1-8, yellow 9-16, red 17-24). All eight red for 1 s: the firmware ran out of processing time. |
 | **TEMPO** LED | Quantisation: green = on, red = off. While the sequencer runs, it flashes with the clock. |
 
 ### MIDI IN
@@ -135,7 +138,7 @@ the next clock; releases act at once. Otherwise presses act at once.
 ### At power-up
 
 Nothing is saved between power cycles. Rungler-32 starts with the internal clock off, length 8 with
-all bits set, quantisation on, no transpose, loop lock off and feedback at a single repeat.
+all bits set, SCALE 50%, quantisation on, no transpose, loop lock off and feedback at a single repeat.
 
 ## Installing
 

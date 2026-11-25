@@ -121,7 +121,9 @@ static const uint16_t kSyncDen[kSyncSteps] = { 4, 3, 8, 2, 3, 4, 1, 2, 1 };
 
 // ---- shift register --------------------------------------------------------------------------------------
 static const int16_t kWhiteKeys[8] = { 0, 2, 4, 5, 7, 9, 11, 12 };   // semitones of the white keys, low C .. high C
-static const int32_t kAsrSpanMv = 2000;                             // KB output span: 0 .. +2 V (two octaves)
+static const int32_t kKbLoMv = -5400, kKbHiMv = 5100;              // KB output's full range (PWM 0 .. 400 counts)
+static const int32_t kScaleDefault = 2048;                          // SCALE in 1/4096: 50%
+static const int32_t kKnobSlop = 24;                                // TEMPO travel (of 4096) that counts as a turn
 static const int16_t kMajor[12] = { 0, 0, 2, 2, 4, 5, 5, 7, 7, 9, 9, 11 };   // semitone -> C major degree (round down)
 
 #ifndef DELAY_NO_FEEDBACK
@@ -145,12 +147,13 @@ public:
           resetCnt_(0), resetSeen_(false), lastResetEdge_(0), syncPeriod_(0), periodQ4_(0), ringIdx_(0), histN_(0),
           clkInc_(kClockBaseInc), clkPhase_(0), clkOn_(false), clkRestart_(false), clkHigh_(false), gatePrev_(false),
           rng_(0x2545F491UL),
-          octave_(0), shiftUsed_(false), fbShowUntil_(0), fbView_(false), dispDirty_(true), freezeGreen_(false), ovSeen_(0), ovShowUntil_(0), ovView_(false),
+          octave_(0), shiftUsed_(false), fbShowUntil_(0), scaleShowUntil_(0), view_(0), dispDirty_(true), freezeGreen_(false), ovSeen_(0), ovShowUntil_(0), ovView_(false),
           noteCount_(0), lastNote_(60), midiOwnsKB_(false), bend_(0), envPrev_(false), gatePrevOut_(false), holdPrev_(false),
           pendKeys_(0), activeKeys_(0), keyPulse_(false), keyPulseUntil_(0), asrLive_(false),
           midiTick_(0), midiGate_(false), lastMidiClock_(0), midiClockSeen_(false),
           locked_(false), jackPrev_(false), lastJackEdge_(0), jackSeen_(false), tempoLed_(Off),
-          asrBits_(0xFF), asrLen_(8), quant_(true)
+          asrBits_(0xFF), asrLen_(8), quant_(true),
+          scaleQ12_(kScaleDefault), knobRef_(0), tempoRef_(0), clockPos_(0), scaleEngaged_(false), fbHold_(false), tempoHeld_(false), shiftDownAt_(0)
     {
         // all zeros is encoded silence: from state (0, 0), a zero sample encodes to nibble 0 and the
         // state stays (0, 0), so encoder and decoder agree everywhere from the start
@@ -205,7 +208,9 @@ private:
     int16_t octave_;            // -4 .. +3
     bool shiftUsed_;            // an arrow was pressed while SHIFT was held (then releasing SHIFT does nothing)
     uint32_t fbShowUntil_;      // show the feedback level on the octave LEDs until this tick
-    bool fbView_, dispDirty_;
+    uint32_t scaleShowUntil_;   // show SCALE on the octave LEDs until this tick
+    int16_t view_;              // octave LEDs show: 0 octave, 1 feedback, 2 SCALE
+    bool dispDirty_;
     bool freezeGreen_;          // octave LEDs showing delay buffer freeze green
     uint16_t ovSeen_; uint32_t ovShowUntil_; bool ovView_;   // tick-overrun warning
     // MIDI (main loop): held notes, last-note priority; they own KB while held
@@ -238,17 +243,30 @@ private:
     uint16_t asrBits_;          // bit i = register position i (bit 0 is the first bit)
     int16_t asrLen_;            // active length, 1 .. 8
     bool quant_;                // KB quantised to C major
+    // SCALE (SHIFT + TEMPO): KB attenuation
+    int32_t scaleQ12_;          // 0 .. 4096 = 0 .. 100%
+    int32_t knobRef_;           // TEMPO position when SHIFT went down
+    int32_t tempoRef_;          // TEMPO position when SHIFT was released
+    int32_t clockPos_;          // TEMPO position the internal clock runs at
+    bool scaleEngaged_;         // TEMPO turned past the dead band during this SHIFT hold
+    bool fbHold_;               // an arrow changed feedback during this SHIFT hold
+    bool tempoHeld_;            // clock rate held after SHIFT until TEMPO moves past the dead band
+    uint32_t shiftDownAt_;      // tick SHIFT went down (a long press does not toggle quantisation)
 
     // KB output and white-key LEDs from the active bits
     __attribute__((noinline)) void AsrOutput()      // flash: called from Idle(), and once at start
     {
         uint16_t mask = (uint16_t)((1u << asrLen_) - 1);
         uint16_t v = asrBits_ & mask;
-        int32_t mv = (int32_t)v * kAsrSpanMv / mask;
+        // the bits as a number span the whole output range (-5.4 .. +5.1 V), then SCALE attenuates toward 0 V
+        int32_t full = kKbLoMv + (int32_t)v * (kKbHiMv - kKbLoMv) / mask;
+        int32_t mv = full * scaleQ12_ / 4096;
         if (midiOwnsKB_) {                                       // KB plays MIDI until the next clock
         } else if (quant_) {
-            int16_t semis = (int16_t)((mv * 12 + 500) / 1000);       // nearest semitone (1 V/oct, 0 V = middle C)
-            PitchMIDINote(60 + octave_ * 12 + (semis / 12) * 12 + kMajor[semis % 12]);
+            int32_t s = mv * 12;                                 // 1/1000 semitone (1 V/oct, 0 V = middle C)
+            int16_t semis = (int16_t)(s >= 0 ? (s + 500) / 1000 : -((500 - s) / 1000));   // nearest semitone
+            int16_t oct = semis >= 0 ? semis / 12 : -((11 - semis) / 12);                  // floor(semis / 12)
+            PitchMIDINote(60 + (octave_ + oct) * 12 + kMajor[semis - oct * 12]);
         } else {
             PitchMillivolts(mv + (int32_t)octave_ * 1000);
         }
@@ -314,6 +332,14 @@ private:
             else                     c = i >= 24 - fbLevel_ ? Red : Amber;
             StepLED(i, c);
         }
+    }
+
+    // SCALE on the octave LEDs: a green bar in 1/16 steps (each LED 12.5%), a half step lit yellow at its end
+    void ShowScale()
+    {
+        int16_t n = (int16_t)((scaleQ12_ * 16 + 2048) >> 12);   // 0 .. 16
+        for (int16_t i = 0; i < 8; i++)
+            StepLED(i, 2 * i + 2 <= n ? Green : (2 * i + 1 == n ? Amber : Off));
     }
 
     // TEMPO knob -> kMinDelay..kMaxDelay. The knob reads about 13..3780 end to end (measured), so that travel
@@ -440,11 +466,30 @@ private:
             int32_t rt = d > 0 ? (int32_t)(((int64_t)freezeDelay_ << 16) / d) : 262144L;
             loopTarget_ = rt < 16384 ? 16384 : (rt > 262144L ? 262144L : rt);
         }
-        clkInc_ = ClockInc(pos);
-
         PanelEvents e = TakePanelEvents();
         bool shift = ButtonHeld(Shift);
-        if (e.pressed & ButtonBit(Shift)) shiftUsed_ = false;
+        if (e.pressed & ButtonBit(Shift)) { shiftUsed_ = false; fbHold_ = false; shiftDownAt_ = Ticks(); }
+        // SHIFT + TEMPO: SCALE, hard takeover. Once TEMPO has moved past a dead band from where it was when SHIFT
+        // went down, SCALE jumps to the knob's position and follows it. The clock keeps its
+        // rate while SHIFT is held and after release, the same way: once TEMPO moves past the dead band from where
+        // it was at release, the clock jumps to the knob's position and follows it.
+        if (!shift) {
+            if (tempoHeld_ && (pos - tempoRef_ > kKnobSlop || tempoRef_ - pos > kKnobSlop)) tempoHeld_ = false;
+            if (!tempoHeld_) clockPos_ = pos;
+            knobRef_ = pos; scaleEngaged_ = false;
+        } else {
+            int32_t d = pos - knobRef_;
+            tempoRef_ = pos; tempoHeld_ = true;
+            if (!scaleEngaged_ && (d > kKnobSlop || d < -kKnobSlop)) {
+                scaleEngaged_ = true; shiftUsed_ = true;
+            }
+            if (scaleEngaged_) {
+                int32_t sc = pos >= 4095 ? 4096 : pos;               // knob fully clockwise = 100%
+                if (sc != scaleQ12_) { scaleQ12_ = sc; AsrOutput(); dispDirty_ = true; }
+                scaleShowUntil_ = Ticks() + 3UL * kTickHz / 2;
+            }
+        }
+        clkInc_ = ClockInc(clockPos_);
         if (e.pressed & (ButtonBit(Right) | ButtonBit(Left))) {
             int16_t d = (e.pressed & ButtonBit(Right)) ? 1 : -1;
             if (shift) {                                         // SHIFT + arrows: feedback
@@ -452,6 +497,8 @@ private:
                 if (fbLevel_ < 0) fbLevel_ = 0; else if (fbLevel_ > kFbLevels) fbLevel_ = kFbLevels;
                 shiftUsed_ = true;
                 fbShowUntil_ = Ticks() + 3UL * kTickHz / 2;
+                fbHold_ = true;                                  // the feedback view takes over
+                scaleShowUntil_ = Ticks();
                 dispDirty_ = true;
             } else {                                             // arrows: octave transpose of KB
                 octave_ += d;
@@ -460,7 +507,7 @@ private:
                 dispDirty_ = true;
             }
         }
-        if ((e.released & ButtonBit(Shift)) && !shiftUsed_) {   // SHIFT on its own: quantisation on/off
+        if ((e.released & ButtonBit(Shift)) && !shiftUsed_ && Ticks() - shiftDownAt_ < kTickHz / 2) {   // SHIFT tapped on its own (under 0.5 s): quantisation on/off
             quant_ = !quant_;                                    // the TEMPO LED follows below
             AsrOutput();
         }
@@ -481,20 +528,22 @@ private:
         bool keysNew = false;
         if (!active && pendKeys_) { keysNew = ApplyKeys(held); AsrOutput(); }
 
-        // octave LEDs: the feedback level while SHIFT is held or just after a change, otherwise the octave
+        // octave LEDs: SCALE or the feedback level while SHIFT is held or just after a change, otherwise the octave
         // delay buffer freeze (HOLD jack high): green while it lasts, over the loop-lock yellow (or dark) otherwise.
         // Redrawn whenever it changes, so the LEDs follow the jack.
         bool green = frozen_;
         if (green != freezeGreen_) { freezeGreen_ = green; dispDirty_ = true; }
-        bool fbView = shift || (int32_t)(fbShowUntil_ - Ticks()) > 0;
+        // SHIFT held: SCALE, or the feedback level once an arrow changed it in this hold; each stays 1.5 s after
+        int16_t view = ((shift && fbHold_) || (int32_t)(fbShowUntil_ - Ticks()) > 0) ? 1
+                     : (shift || (int32_t)(scaleShowUntil_ - Ticks()) > 0) ? 2 : 0;
         // a tick overrun (hard real time broken) lights all eight octave LEDs red for 1 s
         uint16_t ov = Overruns();
         if (ov != ovSeen_) { ovSeen_ = ov; ovShowUntil_ = Ticks() + kTickHz; ovView_ = true; dispDirty_ = true; }
         if (ovView_ && (int32_t)(ovShowUntil_ - Ticks()) <= 0) { ovView_ = false; dispDirty_ = true; }
-        if (fbView != fbView_ || dispDirty_) {
-            fbView_ = fbView; dispDirty_ = false;
+        if (view != view_ || dispDirty_) {
+            view_ = view; dispDirty_ = false;
             if (ovView_) { for (int16_t i = 0; i < 8; i++) StepLED(i, Red); }
-            else if (fbView) ShowFeedback(); else ShowOctave();
+            else if (view == 2) ShowScale(); else if (view == 1) ShowFeedback(); else ShowOctave();
         }
 
         MidiInput();
