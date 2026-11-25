@@ -153,7 +153,8 @@ public:
           midiTick_(0), midiGate_(false), lastMidiClock_(0), midiClockSeen_(false),
           locked_(false), jackPrev_(false), lastJackEdge_(0), jackSeen_(false), tempoLed_(Off),
           asrBits_(0xFF), asrLen_(8), quant_(true),
-          scaleQ12_(kScaleDefault), knobRef_(0), tempoRef_(0), clockPos_(0), scaleEngaged_(false), fbHold_(false), tempoHeld_(false), shiftDownAt_(0)
+          scaleQ12_(kScaleDefault), knobRef_(0), tempoRef_(0), clockPos_(0), scaleEngaged_(false), fbHold_(false), tempoHeld_(false), shiftDownAt_(0),
+          runCnt_(0), lastRunEdge_(0), runSeen_(false), runActive_(false)
     {
         // all zeros is encoded silence: from state (0, 0), a zero sample encodes to nibble 0 and the
         // state stays (0, 0), so encoder and decoder agree everywhere from the start
@@ -252,6 +253,8 @@ private:
     bool fbHold_;               // an arrow changed feedback during this SHIFT hold
     bool tempoHeld_;            // clock rate held after SHIFT until TEMPO moves past the dead band
     uint32_t shiftDownAt_;      // tick SHIFT went down (a long press does not toggle quantisation)
+    // RUN/STOP input activity: while it has had a rising edge in the last 2 s, the comparator noise is off
+    uint16_t runCnt_; uint32_t lastRunEdge_; bool runSeen_, runActive_;
 
     // KB output and white-key LEDs from the active bits
     __attribute__((noinline)) void AsrOutput()      // flash: called from Idle(), and once at start
@@ -312,7 +315,7 @@ private:
         else if (g >= 3600) flip = false;
         else {
             int32_t thr = ((int32_t)(g - 150) * 1216) >> 10;     // x 4096 / 3450
-            bool cmp = in > thr;                                 // noise above the GLIDE threshold
+            bool cmp = !runActive_ && in > thr;                  // noise above the GLIDE threshold; off while RUN is active
             flip = JackHigh(RunJack) ^ JackHigh(ResetJack) ^ JackHigh(HoldJack) ^ cmp;
         }
         if (!locked_ && flip) active ^= 1;                       // loop lock: loop unchanged
@@ -555,6 +558,9 @@ private:
         bool g = JackHigh(GateJack) || seq;
         bool clocked = g && !gatePrev_;
         if (clocked && pendKeys_) keysNew = ApplyKeys(held);   // queued presses land on this clock (length first)
+        uint16_t rn = JackRiseCount(RunJack);
+        if (rn != runCnt_) { runCnt_ = rn; lastRunEdge_ = JackRiseTick(RunJack); runSeen_ = true; }
+        runActive_ = runSeen_ && Ticks() - lastRunEdge_ < 2UL * kTickHz;
         if (clocked) ClockAsr();
         // gate output and envelope: high while the last active bit ASR(L) is set, a MIDI note is held or a panel
         // key is held (envelope held with SUSTAIN on, a trigger with it off). While already high, a clock that

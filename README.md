@@ -21,7 +21,8 @@ internal clock.
   (16th notes) replaces it.
 - **Each step** rotates the active bits and XORs the first bit with the **RUN/STOP**, **RESET** and **HOLD**
   inputs and a comparator: is internal noise above the **GLIDE** knob? So GLIDE sets the chance that a
-  step flips the bit. The two ends of GLIDE lock the pattern whatever the jacks do, Turing Machine style:
+  step flips the bit. While a signal is arriving at **RUN/STOP** (a rising edge in the last 2 s) the
+  noise is switched off, so the jacks alone decide and the pattern follows them deterministically. The two ends of GLIDE lock the pattern whatever the jacks do, Turing Machine style:
   fully clockwise it repeats every *L* steps (*L* = the length), fully anticlockwise every 2*L* steps
   (the second pass inverted).
 - **Lower-row keys 1 to 8** set the length (key *n* = *n* bits); their LEDs show the bits.
@@ -72,14 +73,15 @@ points) is analog and works as usual.
 |---|---|
 | **GATE** in (*Clock input*) | Rising edges clock the shift register (along with the internal clock). Edges in the last 2 s count as "sequencer running", so key presses wait for the next clock. Does not drive GATE out or the envelope. |
 | **TEMPO** (*Delay in*) | Audio input of the delay (about -6 to +6 V). It does not affect the shift register. |
-| **RUN/STOP** (*XOR in*) | One of the XOR inputs on each shift-register clock. It does not start or stop the clock. |
+| **RUN/STOP** (*XOR in*) | One of the XOR inputs on each shift-register clock. While it has had a rising edge in the last 2 s, the noise comparator is switched off (deterministic, BYOB-style). It does not start or stop the clock. |
 | **RESET** (*Delay clock in*) | A clock here (2.5 ms to 4 s period) syncs the delay time; sync ends when no edge arrives for twice the period plus 0.25 s. Also one of the XOR inputs. |
 | **HOLD** (*Delay freeze + Env gate in*) | While high: delay buffer freeze, and the envelope opens (each rising edge retriggers it). Does not drive GATE out. Also one of the XOR inputs. |
 
 The XOR inputs: on each clock, if an odd number of RUN/STOP, RESET, HOLD and the comparator are high,
 the first bit flips. A jack held high therefore reverses the decision of the others. They only count
 with GLIDE between its two ends: at either end, and with loop lock on, the jacks don't change the
-pattern.
+pattern. While RUN/STOP has had a rising edge in the last 2 s, the comparator is left out (no noise), so
+GLIDE's middle range has no effect on the flips.
 
 ### Outputs
 
@@ -96,7 +98,7 @@ pattern.
 | Control | Rungler-32 |
 |---|---|
 | **TEMPO** (*Internal clock rate*) | Internal clock rate, 0.25 Hz to 1 kHz (exponential). With SHIFT held: SCALE (see below). |
-| **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: 0.33 ms to about 0.52 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2, halved until it fits). **Flip chance**: the threshold of the noise comparator, so turning it clockwise makes a step less likely to flip the first bit. **Pattern lock** at the ends, whatever the jacks do: fully clockwise the pattern repeats every *L* steps (*L* = the length); fully anticlockwise the first bit flips every step, so it repeats every 2*L* steps with the second pass inverted. GLIDE no longer glides the pitch. |
+| **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: 0.33 ms to about 0.52 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2, halved until it fits). **Flip chance**: the threshold of the noise comparator, so turning it clockwise makes a step less likely to flip the first bit (no effect while a signal is arriving at RUN/STOP, which switches the noise off). **Pattern lock** at the ends, whatever the jacks do: fully clockwise the pattern repeats every *L* steps (*L* = the length); fully anticlockwise the first bit flips every step, so it repeats every 2*L* steps with the second pass inverted. GLIDE no longer glides the pitch. |
 | **SUSTAIN** | Envelope held (on) or triggered (off). With MIDI: legato (on) or retrigger per note (off). |
 
 ### Buttons and keys
