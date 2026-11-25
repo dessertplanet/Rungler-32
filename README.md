@@ -56,7 +56,7 @@ A 24 kHz tape-style delay, up to about 0.52 s, stored as 4-bit ADPCM.
 If all eight octave LEDs ever light red together for a second, the firmware ran out of processing time
 for a moment. Please report it with what you were doing.
 
-## Panel reference
+## Panel reference (click diagram to enlarge)
 
 ![The Mother-32 panel with Rungler-32's functions marked in orange](panel.png)
 
