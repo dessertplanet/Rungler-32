@@ -20,8 +20,10 @@ internal clock.
   (0.25 Hz to 1 kHz on **TEMPO**). While the internal clock is on and MIDI clock arrives, the MIDI clock
   (16th notes) replaces it.
 - **Each step** rotates the active bits and XORs the first bit with the **RUN/STOP**, **RESET** and **HOLD**
-  inputs and a comparator: is the **TEMPO** input above the **GLIDE** knob? With nothing patched
-  into TEMPO, internal noise is compared instead. The two ends of GLIDE lock the pattern.
+  inputs and a comparator: is internal noise above the **GLIDE** knob? So GLIDE sets the chance that a
+  step flips the bit. The two ends of GLIDE lock the pattern whatever the jacks do, Turing Machine style:
+  fully clockwise it repeats every *L* steps (*L* = the length), fully anticlockwise every 2*L* steps
+  (the second pass inverted).
 - **Lower-row keys 1 to 8** set the length (key *n* = *n* bits); their LEDs show the bits.
 - **KB out:** the active bits as a number, scaled to 0 to +2 V and quantised to C major by default.
   Tap **SHIFT** on its own to toggle quantisation (TEMPO LED green = on, red = off). The **arrows**
@@ -49,7 +51,7 @@ A 24 kHz tape-style delay, up to about 0.52 s, stored as 4-bit ADPCM.
 - **Delay buffer freeze:** while the **HOLD input** is high, recording stops and the last delay-time of
   sound loops. GLIDE and the RESET clock repitch the loop (1/4x to 4x). The other octave LEDs light green
   while HOLD is high, over a yellow background instead of a dark one when loop lock is on.
-- ASSIGN carries only the delayed signal: patch it into EXT AUDIO and use MIX for dry + wet.
+- ASSIGN carries only the delayed signal, inverted: patch it into EXT AUDIO and use MIX for dry + wet.
 
 If all eight octave LEDs ever light red together for a second, the firmware ran out of processing time
 for a moment. Please report it with what you were doing.
@@ -67,14 +69,15 @@ points) is analog and works as usual.
 | Jack | Rungler-32 |
 |---|---|
 | **GATE** in (*Clock input*) | Rising edges clock the shift register (along with the internal clock). Edges in the last 2 s count as "sequencer running", so key presses wait for the next clock. Does not drive GATE out or the envelope. |
-| **TEMPO** (*Delay in*) | Audio input of the delay (about -6 to +6 V). Also the comparator input. Within about ±120 mV for 2 s, or never patched: the comparator uses internal noise instead. |
+| **TEMPO** (*Delay in*) | Audio input of the delay (about -6 to +6 V). It does not affect the shift register. |
 | **RUN/STOP** (*XOR in*) | One of the XOR inputs on each shift-register clock. It does not start or stop the clock. |
 | **RESET** (*Delay clock in*) | A clock here (2.5 ms to 4 s period) syncs the delay time; sync ends when no edge arrives for twice the period plus 0.25 s. Also one of the XOR inputs. |
 | **HOLD** (*Delay freeze + Env gate in*) | While high: delay buffer freeze, and the envelope opens (each rising edge retriggers it). Does not drive GATE out. Also one of the XOR inputs. |
 
 The XOR inputs: on each clock, if an odd number of RUN/STOP, RESET, HOLD and the comparator are high,
-the first bit flips. A jack held high therefore reverses the decision of the others. Loop lock ignores
-all of them.
+the first bit flips. A jack held high therefore reverses the decision of the others. They only count
+with GLIDE between its two ends: at either end, and with loop lock on, the jacks don't change the
+pattern.
 
 ### Outputs
 
@@ -83,7 +86,7 @@ all of them.
 | **KB** (*Sequencer out*) | The active bits as a number, 0 to +2 V (two octaves), quantised to C major by default, plus the octave transpose. A held MIDI note replaces it (1 V/oct, MIDI note 60 = 0 V) until the next clock with no note held. Uses the unit's factory calibration. |
 | **GATE** out (*Last bit output*) | High while the last active bit is set (from the first clock on), while any key is held, or while a MIDI note is held. A key tapped while the sequencer runs gives a 10 ms gate on the next clock. |
 | **EG** | The envelope opens with GATE out or the HOLD input. Retriggered by a clock that leaves the last bit set, a new key press, a HOLD rising edge, or a new MIDI note (SUSTAIN off). SUSTAIN off = trigger (attack/decay), on = held. |
-| **ASSIGN** (*Delay out*) | The delayed signal only (wet). Patch into EXT AUDIO and use MIX for dry + wet. |
+| **ASSIGN** (*Delay out*) | The delayed signal only (wet), inverted. Patch into EXT AUDIO and use MIX for dry + wet. |
 | Accent (internal) | MIDI notes with velocity above 95 fire the Mother-32's accent. |
 
 ### Knobs and switches
@@ -91,7 +94,7 @@ all of them.
 | Control | Rungler-32 |
 |---|---|
 | **TEMPO** (*Internal clock rate*) | Internal clock rate, 0.25 Hz to 1 kHz (exponential). |
-| **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: 0.33 ms to about 0.52 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2, halved until it fits). **Comparator threshold**: the comparator is high when the TEMPO input (or noise) is above it. **Pattern lock** at the ends: fully anticlockwise the comparator is always high, fully clockwise never. GLIDE no longer glides the pitch. |
+| **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: 0.33 ms to about 0.52 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2, halved until it fits). **Flip chance**: the threshold of the noise comparator, so turning it clockwise makes a step less likely to flip the first bit. **Pattern lock** at the ends, whatever the jacks do: fully clockwise the pattern repeats every *L* steps (*L* = the length); fully anticlockwise the first bit flips every step, so it repeats every 2*L* steps with the second pass inverted. GLIDE no longer glides the pitch. |
 | **SUSTAIN** | Envelope held (on) or triggered (off). With MIDI: legato (on) or retrigger per note (off). |
 
 ### Buttons and keys

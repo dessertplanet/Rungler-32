@@ -7,10 +7,10 @@
 //    toggles it; 0.25 Hz .. 1 kHz, exponential, on the TEMPO knob). While it is on and MIDI clock is
 //    arriving, MIDI clock in 16th notes replaces it (MIDI transport is ignored).
 //  - Each clock rotates the active bits one place (the last wraps to the first) and XORs the first bit with
-//    the RUN, RESET and HOLD input jacks and a comparator: comparator input above the GLIDE knob. The
-//    comparator input is the TEMPO CV jack (its whole range mapped onto the knob's travel), or internal
-//    noise while the jack has been silent (within about +-120 mV) for 2 s or has never had a signal. Dead
-//    bands at both ends of GLIDE lock the pattern. All bits start set.
+//    the RUN, RESET and HOLD input jacks and a comparator: internal noise above the GLIDE knob, so GLIDE sets
+//    the chance that a step flips the bit (the TEMPO CV jack feeds only the delay). Dead bands at both ends of
+//    GLIDE lock the pattern whatever the jacks do: fully anticlockwise the bit flips every step (repeats every
+//    2L steps, the second pass inverted), fully clockwise never (repeats every L steps). All bits start set.
 //  - HOLD button: loop lock on/off. Locked, each clock only rotates the bits (no XOR), so the current pattern
 //    loops unchanged; the seven non-selected octave LEDs light yellow.
 //  - TEMPO LED: quantisation colour (green on, red off), flashing with the clock while the sequencer is active.
@@ -31,9 +31,9 @@
 // the next shift-register clock hands it back to the shift register.
 //
 // Delay: TEMPO CV jack (oversampled 4x and low-pass filtered by the framework) -> 24 kHz tape-style delay ->
-// ASSIGN output (wet only; for dry + wet patch ASSIGN into EXT AUDIO and blend with the MIX knob).
+// ASSIGN output (wet only, inverted; for dry + wet patch ASSIGN into EXT AUDIO and blend with the MIX knob).
 //  - GLIDE knob: delay time, 0.33 ms to about 0.52 s, gliding toward the knob like tape (read speed 0.1x ..
-//    1.9x), so turning it bends the pitch of what is playing. GLIDE is also the comparator threshold.
+//    1.9x), so turning it bends the pitch of what is playing. GLIDE is also the noise comparator's threshold.
 //  - Clock sync: while a clock (2.5 ms .. 4 s period) arrives on the RESET input jack (an edge within twice its
 //    period + 0.25 s), the period is measured from exact edge times, averaged over the last 150 ms, so a clock
 //    whose rate is modulated (e.g. by a slow LFO) gives chorus/vibrato, with the delay buffer frozen or not; the
@@ -144,7 +144,7 @@ public:
           loopLen_(4), loopRel_(0), loopPos_(0), loopRate_(65536L), loopTarget_(65536L), freezeDelay_(kMinDelay), targetDelay_(0), assignFoldK_(7570), assignFoldB_(52523),
           resetCnt_(0), resetSeen_(false), lastResetEdge_(0), syncPeriod_(0), periodQ4_(0), ringIdx_(0), histN_(0),
           clkInc_(kClockBaseInc), clkPhase_(0), clkOn_(false), clkRestart_(false), clkHigh_(false), gatePrev_(false),
-          lastActive_(0), everActive_(false), rng_(0x2545F491UL),
+          rng_(0x2545F491UL),
           octave_(0), shiftUsed_(false), fbShowUntil_(0), fbView_(false), dispDirty_(true), freezeGreen_(false), ovSeen_(0), ovShowUntil_(0), ovView_(false),
           noteCount_(0), lastNote_(60), midiOwnsKB_(false), bend_(0), envPrev_(false), gatePrevOut_(false), holdPrev_(false),
           pendKeys_(0), activeKeys_(0), keyPulse_(false), keyPulseUntil_(0), asrLive_(false),
@@ -200,10 +200,7 @@ private:
     volatile bool clkRestart_;  // the tick restarts the phase (so it starts with a pulse)
     volatile bool clkHigh_;     // square wave, 50% duty
     bool gatePrev_;             // combined gate (GATE jack OR internal clock) at the last main-loop pass
-    // comparator input: the TEMPO CV jack, or internal noise while the jack is silent
-    uint32_t lastActive_;       // Ticks() when the input last went beyond the threshold
-    bool everActive_;
-    uint32_t rng_;              // xorshift32 state
+    uint32_t rng_;              // xorshift32 state: the comparator's noise
     // octave transpose and the octave-LED display
     int16_t octave_;            // -4 .. +3
     bool shiftUsed_;            // an arrow was pressed while SHIFT was held (then releasing SHIFT does nothing)
@@ -276,35 +273,31 @@ private:
         return ((kClockBaseInc * (uint32_t)m) >> 15) << oct;
     }
 
-    // silent comparator input: never beyond the threshold, or not for 2 s
-    bool InputSilent() const { return !everActive_ || Ticks() - lastActive_ > 2UL * kTickHz; }
-
     // one shift-register clock: rotate the active bits, XOR the first with RUN, RESET, HOLD and the comparator
     void ClockAsr()
     {
         uint16_t mask = (uint16_t)((1u << asrLen_) - 1);
         uint16_t last = (asrBits_ >> (asrLen_ - 1)) & 1;
         uint16_t active = (uint16_t)(((asrBits_ << 1) | last) & mask);         // rotate by one place
-        // comparator: the comparator input above the GLIDE knob; the input's whole range (0..4095) maps onto the knob's
-        // travel: the TEMPO CV input (ADC 0..4095, about -6..+6 V), or internal noise while that is silent
-        int16_t in;
-        if (InputSilent()) {
-            rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;        // xorshift32
-            in = (int16_t)(rng_ >> 20);
-        } else {
-            in = (int16_t)(TempoCVInRaw() + 2048);
-        }
-        // GLIDE threshold with dead bands at both ends so the extremes lock the pattern: at the left end the
-        // input is always above (the first bit flips every clock), at the right end never (nothing flips).
-        // In between, the remaining travel (150 .. 3600) is stretched to 0 .. 4095.
+        // comparator: internal noise (uniform 0..4095) above the GLIDE threshold, so GLIDE sets the flip chance.
+        // The TEMPO CV input is not used here (it only feeds the delay).
+        rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;            // xorshift32
+        int16_t in = (int16_t)(rng_ >> 20);
+        // GLIDE's dead bands lock the pattern whatever the jacks do (Turing Machine style): at the left end the
+        // first bit flips every clock (the pattern repeats every 2L steps, the second pass inverted), at the
+        // right end never (it repeats every L steps). In between, the remaining travel (150 .. 3600) is
+        // stretched to 0 .. 4095 as the noise threshold, and an odd number of RUN, RESET, HOLD and the
+        // comparator true flips the first bit.
         int16_t g = Glide();
-        int32_t thr;
-        if (g <= 150) thr = -1;
-        else if (g >= 3600) thr = 4096;
-        else thr = ((int32_t)(g - 150) * 1216) >> 10;            // x 4096 / 3450
-        bool cmp = in > thr;                                     // input above the GLIDE threshold
-        // an odd number of RUN, RESET, HOLD and the comparator true flips the first bit
-        if (!locked_ && (JackHigh(RunJack) ^ JackHigh(ResetJack) ^ JackHigh(HoldJack) ^ cmp)) active ^= 1;   // locked: loop unchanged
+        bool flip;
+        if (g <= 150) flip = true;
+        else if (g >= 3600) flip = false;
+        else {
+            int32_t thr = ((int32_t)(g - 150) * 1216) >> 10;     // x 4096 / 3450
+            bool cmp = in > thr;                                 // noise above the GLIDE threshold
+            flip = JackHigh(RunJack) ^ JackHigh(ResetJack) ^ JackHigh(HoldJack) ^ cmp;
+        }
+        if (!locked_ && flip) active ^= 1;                       // loop lock: loop unchanged
         asrBits_ = (asrBits_ & ~mask) | active;                                // inactive bits are kept
         if (noteCount_ == 0) midiOwnsKB_ = false;                              // KB back from MIDI on the first clock with no note held
         AsrOutput();
@@ -449,9 +442,6 @@ private:
         }
         clkInc_ = ClockInc(pos);
 
-        int16_t v = TempoCVInRaw() - kZero;                    // input activity (about +-120 mV)
-        if (v > 40 || v < -40) { lastActive_ = Ticks(); everActive_ = true; }
-
         PanelEvents e = TakePanelEvents();
         bool shift = ButtonHeld(Shift);
         if (e.pressed & ButtonBit(Shift)) shiftUsed_ = false;
@@ -579,9 +569,10 @@ private:
             WriteStep(((int32_t)TempoCVInRaw() - kZero) << 4, y);  // input at 16-bit scale
             PF_END(u2, m32_pfU2);
         }
-        // ASSIGN output in PWM counts directly: (y * 3.02 mV / 16) -> calibrated counts256, folded into one
+        // ASSIGN output, inverted (the feedback above uses y as is), in PWM counts directly:
+        // (-y * 3.02 mV / 16) -> calibrated counts256, folded into one
         // multiply-add whose constants come from the framework's calibration at start-up
-        AssignRaw(((y * assignFoldK_) >> 12) + assignFoldB_);
+        AssignRaw(((-y * assignFoldK_) >> 12) + assignFoldB_);
     }
 
     // freeze: remember the decoder (it sits at the oldest sample of the loop) and the loop length up to the last
