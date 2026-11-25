@@ -121,7 +121,15 @@ static const uint16_t kSyncDen[kSyncSteps] = { 4, 3, 8, 2, 3, 4, 1, 2, 1 };
 
 // ---- shift register --------------------------------------------------------------------------------------
 static const int16_t kWhiteKeys[8] = { 0, 2, 4, 5, 7, 9, 11, 12 };   // semitones of the white keys, low C .. high C
-static const int32_t kKbLoMv = -5400, kKbHiMv = 5100;              // KB output's full range (PWM 0 .. 400 counts)
+// KB span before SCALE (all bits clear .. all bits set). Default 0 .. +5 V; build with -DKB_BIPOLAR for the whole
+// output range (-5.4 .. +5.1 V, PWM 0 .. 400 counts) or -DKB_HALF_RANGE for -2.5 .. +2.5 V.
+#if defined(KB_BIPOLAR)
+static const int32_t kKbLoMv = -5400, kKbHiMv = 5100;
+#elif defined(KB_HALF_RANGE)
+static const int32_t kKbLoMv = -2500, kKbHiMv = 2500;
+#else
+static const int32_t kKbLoMv = 0, kKbHiMv = 5000;
+#endif
 static const int32_t kScaleDefault = 2048;                          // SCALE in 1/4096: 50%
 static const int32_t kKnobSlop = 24;                                // TEMPO travel (of 4096) that counts as a turn
 static const int16_t kMajor[12] = { 0, 0, 2, 2, 4, 5, 5, 7, 7, 9, 9, 11 };   // semitone -> C major degree (round down)
@@ -153,8 +161,8 @@ public:
           midiTick_(0), midiGate_(false), lastMidiClock_(0), midiClockSeen_(false),
           locked_(false), jackPrev_(false), lastJackEdge_(0), jackSeen_(false), tempoLed_(Off),
           asrBits_(0xFF), asrLen_(8), quant_(true),
-          scaleQ12_(kScaleDefault), knobRef_(0), tempoRef_(0), clockPos_(0), scaleEngaged_(false), fbHold_(false), tempoHeld_(false), shiftDownAt_(0),
-          runCnt_(0), lastRunEdge_(0), runSeen_(false), runActive_(false)
+          scaleQ12_(kScaleDefault), knobRef_(0), tempoRef_(0), clockPos_(0), scaleEngaged_(false), keyScale_(false), octOn_(true), tempoHeld_(false), shiftDownAt_(0),
+          runCnt_(0), lastRunEdge_(0), runSeen_(false), runActive_(false), seeded_(false)
     {
         // all zeros is encoded silence: from state (0, 0), a zero sample encodes to nibble 0 and the
         // state stays (0, 0), so encoder and decoder agree everywhere from the start
@@ -209,8 +217,8 @@ private:
     int16_t octave_;            // -4 .. +3
     bool shiftUsed_;            // an arrow was pressed while SHIFT was held (then releasing SHIFT does nothing)
     uint32_t fbShowUntil_;      // show the feedback level on the octave LEDs until this tick
-    uint32_t scaleShowUntil_;   // show SCALE on the octave LEDs until this tick
-    int16_t view_;              // octave LEDs show: 0 octave, 1 feedback, 2 SCALE
+    uint32_t scaleShowUntil_;   // show SCALE on the key LEDs until this tick
+    int16_t view_;              // octave LEDs show: 0 octave, 1 feedback
     bool dispDirty_;
     bool freezeGreen_;          // octave LEDs showing delay buffer freeze green
     uint16_t ovSeen_; uint32_t ovShowUntil_; bool ovView_;   // tick-overrun warning
@@ -250,18 +258,20 @@ private:
     int32_t tempoRef_;          // TEMPO position when SHIFT was released
     int32_t clockPos_;          // TEMPO position the internal clock runs at
     bool scaleEngaged_;         // TEMPO turned past the dead band during this SHIFT hold
-    bool fbHold_;               // an arrow changed feedback during this SHIFT hold
+    bool keyScale_;             // key LEDs showing SCALE (instead of the bits)
+    bool octOn_;                // octave LED lit (it flashes with the sequencer clock while RUN/STOP is on)
     bool tempoHeld_;            // clock rate held after SHIFT until TEMPO moves past the dead band
     uint32_t shiftDownAt_;      // tick SHIFT went down (a long press does not toggle quantisation)
     // RUN/STOP input activity: while it has had a rising edge in the last 2 s, the comparator noise is off
     uint16_t runCnt_; uint32_t lastRunEdge_; bool runSeen_, runActive_;
+    bool seeded_;               // start-up bits randomised
 
     // KB output and white-key LEDs from the active bits
     __attribute__((noinline)) void AsrOutput()      // flash: called from Idle(), and once at start
     {
         uint16_t mask = (uint16_t)((1u << asrLen_) - 1);
         uint16_t v = asrBits_ & mask;
-        // the bits as a number span the whole output range (-5.4 .. +5.1 V), then SCALE attenuates toward 0 V
+        // the bits as a number span kKbLoMv .. kKbHiMv, then SCALE attenuates toward 0 V
         int32_t full = kKbLoMv + (int32_t)v * (kKbHiMv - kKbLoMv) / mask;
         int32_t mv = full * scaleQ12_ / 4096;
         if (midiOwnsKB_) {                                       // KB plays MIDI until the next clock
@@ -273,6 +283,11 @@ private:
         } else {
             PitchMillivolts(mv + (int32_t)octave_ * 1000);
         }
+        if (!keyScale_) ShowBits();
+    }
+
+    void ShowBits()
+    {
         for (int16_t i = 0; i < 8; i++) KeyLED(i, i < asrLen_ && ((asrBits_ >> i) & 1));
     }
 
@@ -301,6 +316,7 @@ private:
         uint16_t last = (asrBits_ >> (asrLen_ - 1)) & 1;
         uint16_t active = (uint16_t)(((asrBits_ << 1) | last) & mask);         // rotate by one place
         // comparator: internal noise (uniform 0..4095) above the GLIDE threshold, so GLIDE sets the flip chance.
+        // Off while a signal is arriving at RUN/STOP, so the jacks alone decide (deterministic, BYO Benjolin style).
         // The TEMPO CV input is not used here (it only feeds the delay).
         rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;            // xorshift32
         int16_t in = (int16_t)(rng_ >> 20);
@@ -318,7 +334,7 @@ private:
             bool cmp = !runActive_ && in > thr;                  // noise above the GLIDE threshold; off while RUN is active
             flip = JackHigh(RunJack) ^ JackHigh(ResetJack) ^ JackHigh(HoldJack) ^ cmp;
         }
-        if (!locked_ && flip) active ^= 1;                       // loop lock: loop unchanged
+        if (!locked_ && flip) active ^= 1;                    // loop lock: loop unchanged
         asrBits_ = (asrBits_ & ~mask) | active;                                // inactive bits are kept
         if (noteCount_ == 0) midiOwnsKB_ = false;                              // KB back from MIDI on the first clock with no note held
         AsrOutput();
@@ -337,12 +353,11 @@ private:
         }
     }
 
-    // SCALE on the octave LEDs: a green bar in 1/16 steps (each LED 12.5%), a half step lit yellow at its end
+    // SCALE on the key LEDs: a bar, each LED 12.5% (rounded; four lit = 50%)
     void ShowScale()
     {
-        int16_t n = (int16_t)((scaleQ12_ * 16 + 2048) >> 12);   // 0 .. 16
-        for (int16_t i = 0; i < 8; i++)
-            StepLED(i, 2 * i + 2 <= n ? Green : (2 * i + 1 == n ? Amber : Off));
+        int16_t n = (int16_t)((scaleQ12_ * 8 + 2048) >> 12);    // 0 .. 8
+        for (int16_t i = 0; i < 8; i++) KeyLED(i, i < n);
     }
 
     // TEMPO knob -> kMinDelay..kMaxDelay. The knob reads about 13..3780 end to end (measured), so that travel
@@ -411,9 +426,11 @@ private:
     {
         // loop lock: the other seven LEDs are lit yellow
         // delay buffer freeze: they light green, replacing the loop-lock yellow while it lasts
-        Colour other = freezeGreen_ ? Green : (locked_ ? Amber : Off);
-        for (int16_t i = 0; i < 8; i++) StepLED(i, i == octave_ + 4 ? Red : other);
+        Colour other = OtherColour();
+        for (int16_t i = 0; i < 8; i++) StepLED(i, i == octave_ + 4 && octOn_ ? Red : other);
     }
+
+    Colour OtherColour() const { return freezeGreen_ ? Green : (locked_ ? Amber : Off); }
 
     // Main loop (not the audio tick): knob-derived settings, input activity, panel, display, combined gate.
     //  arrows: octave; SHIFT + arrows: feedback (shown while SHIFT is held and 1.5 s after a change);
@@ -422,6 +439,19 @@ private:
     void Idle()
     {
         int32_t pos = TempoPos();
+        // start-up: for the first 50 ms, stir the noise generator with the knob and TEMPO input readings (their
+        // low bits are noisy, and the number of passes varies), then randomise all eight bits
+        if (!seeded_) {
+            rng_ = rng_ * 1664525UL + 1013904223UL
+                 + ((uint32_t)Glide() ^ ((uint32_t)Tempo() << 12) ^ ((uint32_t)(uint16_t)TempoCVInRaw() << 20));
+            if (Ticks() >= kTickHz / 20) {
+                for (int16_t i = 0; i < 4; i++) { rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5; }
+                if (rng_ == 0) rng_ = 0x2545F491UL;              // xorshift must not be all zeros
+                asrBits_ = (uint16_t)((rng_ >> 24) & 0xFF);
+                seeded_ = true;
+                AsrOutput();
+            }
+        }
         // delay time (the tick glides toward it): synced to a clock on the RESET input while one is arriving,
         // otherwise free on GLIDE
         // Clock period: edge times come from the framework (the tick at which the panel latched the edge, so no
@@ -471,7 +501,7 @@ private:
         }
         PanelEvents e = TakePanelEvents();
         bool shift = ButtonHeld(Shift);
-        if (e.pressed & ButtonBit(Shift)) { shiftUsed_ = false; fbHold_ = false; shiftDownAt_ = Ticks(); }
+        if (e.pressed & ButtonBit(Shift)) { shiftUsed_ = false; shiftDownAt_ = Ticks(); }
         // SHIFT + TEMPO: SCALE, hard takeover. Once TEMPO has moved past a dead band from where it was when SHIFT
         // went down, SCALE jumps to the knob's position and follows it. The clock keeps its
         // rate while SHIFT is held and after release, the same way: once TEMPO moves past the dead band from where
@@ -488,7 +518,7 @@ private:
             }
             if (scaleEngaged_) {
                 int32_t sc = pos >= 4095 ? 4096 : pos;               // knob fully clockwise = 100%
-                if (sc != scaleQ12_) { scaleQ12_ = sc; AsrOutput(); dispDirty_ = true; }
+                if (sc != scaleQ12_) { scaleQ12_ = sc; AsrOutput(); if (keyScale_) ShowScale(); }
                 scaleShowUntil_ = Ticks() + 3UL * kTickHz / 2;
             }
         }
@@ -500,8 +530,6 @@ private:
                 if (fbLevel_ < 0) fbLevel_ = 0; else if (fbLevel_ > kFbLevels) fbLevel_ = kFbLevels;
                 shiftUsed_ = true;
                 fbShowUntil_ = Ticks() + 3UL * kTickHz / 2;
-                fbHold_ = true;                                  // the feedback view takes over
-                scaleShowUntil_ = Ticks();
                 dispDirty_ = true;
             } else {                                             // arrows: octave transpose of KB
                 octave_ += d;
@@ -526,19 +554,34 @@ private:
         bool active = clkOn_ || (jackSeen_ && Ticks() - lastJackEdge_ < 2UL * kTickHz);
         uint32_t held = 0;
         for (int16_t k = 0; k < 13; k++) if (Key(k)) held |= KeyBit(k);
-        pendKeys_ |= e.pressed & 0x1FFFUL;
+        uint32_t keysDown = e.pressed & 0x1FFFUL;
+        if (shift) {                                             // SHIFT + key n (lower row): SCALE = n x 12.5%
+            for (int16_t w = 0; w < 8; w++) {
+                uint32_t kb = KeyBit(kWhiteKeys[w]);
+                if (keysDown & kb) {
+                    keysDown &= ~kb;                             // no length change, gate or envelope
+                    scaleQ12_ = (int32_t)(w + 1) * 512;
+                    shiftUsed_ = true;
+                    scaleShowUntil_ = Ticks() + 3UL * kTickHz / 2;
+                    AsrOutput();
+                    if (keyScale_) ShowScale();
+                }
+            }
+        }
+        pendKeys_ |= keysDown;
         activeKeys_ &= held;
         bool keysNew = false;
         if (!active && pendKeys_) { keysNew = ApplyKeys(held); AsrOutput(); }
 
-        // octave LEDs: SCALE or the feedback level while SHIFT is held or just after a change, otherwise the octave
+        // key LEDs: SCALE while SHIFT is held and 1.5 s after a change, otherwise the bits
+        bool keyScale = shift || (int32_t)(scaleShowUntil_ - Ticks()) > 0;
+        if (keyScale != keyScale_) { keyScale_ = keyScale; if (keyScale) ShowScale(); else ShowBits(); }
+        // octave LEDs: the feedback level while SHIFT is held or just after a change, otherwise the octave
         // delay buffer freeze (HOLD jack high): green while it lasts, over the loop-lock yellow (or dark) otherwise.
         // Redrawn whenever it changes, so the LEDs follow the jack.
         bool green = frozen_;
         if (green != freezeGreen_) { freezeGreen_ = green; dispDirty_ = true; }
-        // SHIFT held: SCALE, or the feedback level once an arrow changed it in this hold; each stays 1.5 s after
-        int16_t view = ((shift && fbHold_) || (int32_t)(fbShowUntil_ - Ticks()) > 0) ? 1
-                     : (shift || (int32_t)(scaleShowUntil_ - Ticks()) > 0) ? 2 : 0;
+        int16_t view = (shift || (int32_t)(fbShowUntil_ - Ticks()) > 0) ? 1 : 0;
         // a tick overrun (hard real time broken) lights all eight octave LEDs red for 1 s
         uint16_t ov = Overruns();
         if (ov != ovSeen_) { ovSeen_ = ov; ovShowUntil_ = Ticks() + kTickHz; ovView_ = true; dispDirty_ = true; }
@@ -546,7 +589,7 @@ private:
         if (view != view_ || dispDirty_) {
             view_ = view; dispDirty_ = false;
             if (ovView_) { for (int16_t i = 0; i < 8; i++) StepLED(i, Red); }
-            else if (view == 2) ShowScale(); else if (view == 1) ShowFeedback(); else ShowOctave();
+            else if (view == 1) ShowFeedback(); else ShowOctave();
         }
 
         MidiInput();
@@ -556,6 +599,13 @@ private:
         bool midiSync = midiClockSeen_ && Ticks() - lastMidiClock_ < (uint32_t)(kTickHz / 2);
         bool seq = clkOn_ && (midiSync ? midiGate_ : clkHigh_);
         bool g = JackHigh(GateJack) || seq;
+        // octave LED: while the sequencer is active (internal clock on, or the GATE jack changed in the last 2 s)
+        // it flashes with the clock (GATE jack or sequencer), steady otherwise
+        bool octOn = !active || g;
+        if (octOn != octOn_) {
+            octOn_ = octOn;
+            if (view_ == 0 && !ovView_) StepLED(octave_ + 4, octOn ? Red : OtherColour());
+        }
         bool clocked = g && !gatePrev_;
         if (clocked && pendKeys_) keysNew = ApplyKeys(held);   // queued presses land on this clock (length first)
         uint16_t rn = JackRiseCount(RunJack);
@@ -582,9 +632,9 @@ private:
         envPrev_ = env;
         gatePrev_ = g;
 
-        // TEMPO LED: quantisation colour (green on, red off); while the sequencer is active (internal clock
-        // on, or the GATE jack changed in the last 2 s) it flashes with the clock
-        Colour want = (!active || g) ? (quant_ ? Green : Red) : Off;
+        // TEMPO LED (above SHIFT): quantisation colour (green on, red off); it flashes with the sequencer clock
+        // (internal or MIDI) while RUN/STOP is on, steady otherwise
+        Colour want = (!clkOn_ || seq) ? (quant_ ? Green : Red) : Off;
         if (want != tempoLed_) { tempoLed_ = want; TempoLED(want); }
     }
 
