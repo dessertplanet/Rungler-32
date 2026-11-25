@@ -31,7 +31,7 @@
 // the next shift-register clock hands it back to the shift register.
 //
 // Delay: TEMPO CV jack (oversampled 4x and low-pass filtered by the framework) -> 24 kHz tape-style delay ->
-// ASSIGN output (wet only, inverted; for dry + wet patch ASSIGN into EXT AUDIO and blend with the MIX knob).
+// ASSIGN output (wet only; for dry + wet patch ASSIGN into EXT AUDIO and blend with the MIX knob).
 //  - GLIDE knob: delay time, 0.33 ms to about 0.52 s, gliding toward the knob like tape (read speed 0.1x ..
 //    1.9x), so turning it bends the pitch of what is playing. GLIDE is also the noise comparator's threshold.
 //  - Clock sync: while a clock (2.5 ms .. 4 s period) arrives on the RESET input jack (an edge within twice its
@@ -39,7 +39,7 @@
 //    whose rate is modulated (e.g. by a slow LFO) gives chorus/vibrato, with the delay buffer frozen or not; the
 //    delay is that period times a fraction picked by GLIDE (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2), halved
 //    until it fits in 0.52 s. RESET still feeds the shift register's XOR as well.
-//  - SHIFT + arrows: feedback, 25 levels (0 = single repeat ... 100%), shown on the octave LEDs while SHIFT is
+//  - SHIFT + arrows: feedback (inverted: each repeat flips polarity), 25 levels (0 = single repeat ... 100%), shown on the octave LEDs while SHIFT is
 //    held and for 1.5 s after a change: a green bar (1-8), then yellow (9-16) and red (17-24) rolling in from
 //    the right; all red = 100% (the line then holds forever and new input piles up into saturation).
 //    Build with -DDELAY_NO_FEEDBACK for a version without internal feedback.
@@ -561,7 +561,7 @@ private:
             loopRate_ = r;
             y = LoopStep(r);
         } else {
-            // one delay-line step per tick: read the delayed sample, then store input + feedback
+            // one delay-line step per tick: read the delayed sample, then store input - feedback (inverted)
             PF_BEGIN(u1);
             y = ReadStep();
             PF_END(u1, m32_pfU1);
@@ -569,10 +569,9 @@ private:
             WriteStep(((int32_t)TempoCVInRaw() - kZero) << 4, y);  // input at 16-bit scale
             PF_END(u2, m32_pfU2);
         }
-        // ASSIGN output, inverted (the feedback above uses y as is), in PWM counts directly:
-        // (-y * 3.02 mV / 16) -> calibrated counts256, folded into one
+        // ASSIGN output in PWM counts directly: (y * 3.02 mV / 16) -> calibrated counts256, folded into one
         // multiply-add whose constants come from the framework's calibration at start-up
-        AssignRaw(((-y * assignFoldK_) >> 12) + assignFoldB_);
+        AssignRaw(((y * assignFoldK_) >> 12) + assignFoldB_);
     }
 
     // freeze: remember the decoder (it sits at the oldest sample of the loop) and the loop length up to the last
@@ -646,7 +645,8 @@ private:
         return prev_ + (((cur_ - prev_) * (int32_t)(f >> 4)) >> 12);    // linear interpolation
     }
 
-    // input plus feedback of the delayed sample (rounded toward zero), clamped, encoded and stored
+    // input minus feedback of the delayed sample (inverted feedback: each repeat flips polarity; rounded toward
+    // zero), clamped, encoded and stored
     M32_RAMFUNC void WriteStep(int32_t in, int32_t y)
     {
 #ifdef DELAY_NO_FEEDBACK
@@ -654,7 +654,7 @@ private:
         int32_t s = in;                                         // input only (already within 16 bits)
 #else
         int32_t prod = y * kFeedbackQ12[fbLevel_];
-        int32_t s = in + ((prod >= 0) ? (prod >> 12) : -((-prod) >> 12));
+        int32_t s = in - ((prod >= 0) ? (prod >> 12) : -((-prod) >> 12));   // inverted feedback
         if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
 #endif
 

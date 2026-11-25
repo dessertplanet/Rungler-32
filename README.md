@@ -51,7 +51,7 @@ A 24 kHz tape-style delay, up to about 0.52 s, stored as 4-bit ADPCM.
 - **Delay buffer freeze:** while the **HOLD input** is high, recording stops and the last delay-time of
   sound loops. GLIDE and the RESET clock repitch the loop (1/4x to 4x). The other octave LEDs light green
   while HOLD is high, over a yellow background instead of a dark one when loop lock is on.
-- ASSIGN carries only the delayed signal, inverted: patch it into EXT AUDIO and use MIX for dry + wet.
+- ASSIGN carries only the delayed signal: patch it into EXT AUDIO and use MIX for dry + wet.
 
 If all eight octave LEDs ever light red together for a second, the firmware ran out of processing time
 for a moment. Please report it with what you were doing.
@@ -86,7 +86,7 @@ pattern.
 | **KB** (*Sequencer out*) | The active bits as a number, 0 to +2 V (two octaves), quantised to C major by default, plus the octave transpose. A held MIDI note replaces it (1 V/oct, MIDI note 60 = 0 V) until the next clock with no note held. Uses the unit's factory calibration. |
 | **GATE** out (*Last bit output*) | High while the last active bit is set (from the first clock on), while any key is held, or while a MIDI note is held. A key tapped while the sequencer runs gives a 10 ms gate on the next clock. |
 | **EG** | The envelope opens with GATE out or the HOLD input. Retriggered by a clock that leaves the last bit set, a new key press, a HOLD rising edge, or a new MIDI note (SUSTAIN off). SUSTAIN off = trigger (attack/decay), on = held. |
-| **ASSIGN** (*Delay out*) | The delayed signal only (wet), inverted. Patch into EXT AUDIO and use MIX for dry + wet. |
+| **ASSIGN** (*Delay out*) | The delayed signal only (wet). Patch into EXT AUDIO and use MIX for dry + wet. |
 | Accent (internal) | MIDI notes with velocity above 95 fire the Mother-32's accent. |
 
 ### Knobs and switches
@@ -105,7 +105,7 @@ pattern.
 | Upper-row keys **1-8**, **9-16**, **17-24**, **25-32**, **SET END** (*Unused*) | No sequencer function. Holding one still holds GATE out and fires the envelope, like any key. |
 | **◀ / ▶** arrows (*Octave down/up*) | Transpose KB by octaves, -4 to +3. |
 | **SHIFT** tapped alone (*Toggle quantize*) | Quantisation on/off (TEMPO LED green = on, red = off). |
-| **SHIFT** + **◀ / ▶** | Delay feedback, 25 levels: 0 = a single repeat, top = 100% (the loop holds forever and new input piles up into saturation). |
+| **SHIFT** + **◀ / ▶** | Delay feedback, 25 levels, inverted (each repeat flips polarity): 0 = a single repeat, top = 100% (the loop holds forever and new input piles up into saturation). |
 | **RUN/STOP** (*Start/stop internal clock*) | Internal clock on/off. While on, incoming MIDI clock replaces it. |
 | **HOLD** (*Toggle locked loop*) | Loop lock on/off: each clock only rotates the bits, so the pattern repeats unchanged. |
 | **RESET**, **PATTERN** (*Unused*) | Not used while running. RESET held at power-up (with TEMPO fully anticlockwise and SUSTAIN off) enters update mode, see below. |
