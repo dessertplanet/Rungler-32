@@ -470,7 +470,7 @@ private:
                 uint32_t span = p;
                 while (n < histN_) {                                            // widen the window up to 150 ms
                     uint16_t s2 = now16 - ring_[(ringIdx_ - 1 - n) & 15];
-                    if (s2 > (uint16_t)(kTickHz * 3 / 20)) break;
+                    if (s2 > (uint16_t)(3UL * kTickHz / 20)) break;
                     span = s2; n++;
                 }
                 periodQ4_ = (span << 4) / n;                                    // period in 1/16 ticks
