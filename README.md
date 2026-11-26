@@ -47,7 +47,7 @@ next shift-register step.
 
 ### Delay (TEMPO in, ASSIGN out)
 
-A tape-style delay, up to about 0.52 s.
+A tape-style delay, up to about 0.51 s.
 
 - **GLIDE:** delay time. Changes glide like tape, so turning it bends the pitch.
 - **Clock sync:** a clock on the **RESET** input sets the delay to its period times a fraction picked by
@@ -93,7 +93,7 @@ is switched off, so only the jacks decide. GLIDE's ends and loop lock override t
 | Control | Rungler-32 |
 |---|---|
 | **TEMPO** (*Internal clock rate*) | Internal clock rate, 0.25 Hz to 1 kHz (exponential). With SHIFT held: SCALE (see below). |
-| **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: up to about 0.52 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2). **Flip chance**: the threshold of the noise comparator, so turning it clockwise makes a step less likely to flip the first bit (no effect while a signal is arriving at RUN/STOP). **Pattern lock** at the ends, whatever the jacks do: fully clockwise the pattern repeats every *L* steps (*L* = the length); fully anticlockwise the first bit flips every step, so it repeats every 2*L* steps with the second pass inverted. GLIDE no longer glides the pitch. |
+| **GLIDE** (*Turing + Delay time*) | Three jobs at once. **Delay time**: up to about 0.51 s, changing smoothly like tape (bends the pitch); with a clock on RESET, the fraction of its period instead (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2). **Flip chance**: the threshold of the noise comparator, so turning it clockwise makes a step less likely to flip the first bit (no effect while a signal is arriving at RUN/STOP). **Pattern lock** at the ends, whatever the jacks do: fully clockwise the pattern repeats every *L* steps (*L* = the length); fully anticlockwise the first bit flips every step, so it repeats every 2*L* steps with the second pass inverted. GLIDE no longer glides the pitch. |
 | **SUSTAIN** | Envelope held (on) or triggered (off). With MIDI: legato (on) or retrigger per note (off). |
 
 ### Buttons and keys

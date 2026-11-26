@@ -32,13 +32,13 @@
 //
 // Delay: TEMPO CV jack (oversampled 4x and low-pass filtered by the framework) -> 24 kHz tape-style delay ->
 // ASSIGN output (wet only; for dry + wet patch ASSIGN into EXT AUDIO and blend with the MIX knob).
-//  - GLIDE knob: delay time, 0.33 ms to about 0.52 s, gliding toward the knob like tape (read speed 0.1x ..
+//  - GLIDE knob: delay time, 0.33 ms to about 0.51 s, gliding toward the knob like tape (read speed 0.1x ..
 //    1.9x), so turning it bends the pitch of what is playing. GLIDE is also the noise comparator's threshold.
 //  - Clock sync: while a clock (2.5 ms .. 4 s period) arrives on the RESET input jack (an edge within twice its
 //    period + 0.25 s), the period is measured from exact edge times, averaged over the last 150 ms, so a clock
 //    whose rate is modulated (e.g. by a slow LFO) gives chorus/vibrato, with the delay buffer frozen or not; the
 //    delay is that period times a fraction picked by GLIDE (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2), halved
-//    until it fits in 0.52 s. RESET still feeds the shift register's XOR as well.
+//    until it fits in 0.51 s. RESET still feeds the shift register's XOR as well.
 //  - SHIFT + arrows: feedback (inverted: each repeat flips polarity), 25 levels (0 = single repeat ... 100%), shown on the octave LEDs while SHIFT is
 //    held and for 1.5 s after a change: a green bar (1-8), then yellow (9-16) and red (17-24) rolling in from
 //    the right; all red = 100% (the line then holds forever and new input piles up into saturation).
@@ -58,6 +58,8 @@
 //  Speed: the writer collects four nibbles and stores a whole word every fourth sample; the reader keeps
 //  its current word and takes one nibble per sample; the codec state stays in members with the step size
 //  cached. The reader stays at least one word behind the writer (minimum delay 8 samples).
+//  The read head interpolates with a 4-point Hermite through the last four decoded samples, so fractional
+//  delay times keep their treble on every feedback repeat; the frozen loop (no feedback) blends linearly.
 //  The whole per-sample path and its tables run from RAM (M32_RAMFUNC); the line gives up some L0 for it.
 //
 //  Input scale (measured 2026-11-12): 3.02 mV per count, 0 V at 32 counts. Samples are offset-corrected
@@ -88,11 +90,11 @@ static int16_t kImaIndex[16] = { -1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 
 // ---- delay line: 4-bit samples, four per word (lowest nibble first), in two RAM areas ---------------------
 static const uint16_t kWordsA = 0x530;                          // bootloader RAM, 0x0040-0x056F
 #ifdef M32_PROFILE
-static const uint16_t kWordsB = 1545;                           // L0 (less: the profiling counters need room)
+static const uint16_t kWordsB = 1513;                           // L0 (less: the profiling counters need room)
 #else
-static const uint16_t kWordsB = 1805;                           // L0
+static const uint16_t kWordsB = 1742;                           // L0
 #endif
-static const uint16_t kN = (kWordsA + kWordsB) * 4;             // 12,532 samples = 0.52 s at 24 kHz
+static const uint16_t kN = (kWordsA + kWordsB) * 4;             // 12,280 samples = 0.51 s at 24 kHz
 #pragma DATA_SECTION(".bootram")
 uint16_t g_lineA[kWordsA];
 uint16_t g_lineB[kWordsB];
@@ -150,7 +152,7 @@ class Rungler32 : public Mother32 {
 public:
     Rungler32()
         : fbLevel_(0), w_(0), wAcc_(0), encPred_(0), encIdx_(0), encStep_(kImaStep[0]),
-          dec_(0), decWord_(0), decPred_(0), decIdx_(0), decStep_(kImaStep[0]), prev_(0), cur_(0), delay_(0), frozen_(false), wasFrozen_(false), sDec_(0), sWord_(0), sPred_(0), sIdx_(0), sStep_(kImaStep[0]), sPrev_(0), sCur_(0),
+          dec_(0), decWord_(0), decPred_(0), decIdx_(0), decStep_(kImaStep[0]), hm1_(0), h0_(0), prev_(0), cur_(0), delay_(0), frozen_(false), wasFrozen_(false), sDec_(0), sWord_(0), sPred_(0), sIdx_(0), sStep_(kImaStep[0]), sHm1_(0), sH0_(0), sPrev_(0), sCur_(0),
           loopLen_(4), loopRel_(0), loopPos_(0), loopRate_(65536L), loopTarget_(65536L), freezeDelay_(kMinDelay), targetDelay_(0), assignFoldK_(7570), assignFoldB_(52523),
           resetCnt_(0), resetSeen_(false), lastResetEdge_(0), syncPeriod_(0), periodQ4_(0), ringIdx_(0), histN_(0),
           clkInc_(kClockBaseInc), clkPhase_(0), clkOn_(false), clkRestart_(false), clkHigh_(false), gatePrev_(false),
@@ -185,12 +187,13 @@ private:
     uint16_t dec_;              // next index the decoder will decode
     uint16_t decWord_;          // remaining nibbles of the word being decoded
     int32_t decPred_; int16_t decIdx_; int32_t decStep_;
+    int32_t hm1_, h0_;          // decoded samples at dec_ - 4 and dec_ - 3 (for the read head's 4-point interpolation)
     int32_t prev_, cur_;        // decoded samples at dec_ - 2 and dec_ - 1
     int32_t delay_;             // current delay, samples 16.16
     volatile bool frozen_;      // HOLD input jack high: the delay line loops what it holds
     bool wasFrozen_;
     // freeze loop: decoder snapshot at its start, length, position and speed (16.16; target set in the main loop)
-    uint16_t sDec_, sWord_; int32_t sPred_; int16_t sIdx_; int32_t sStep_, sPrev_, sCur_;
+    uint16_t sDec_, sWord_; int32_t sPred_; int16_t sIdx_; int32_t sStep_, sHm1_, sH0_, sPrev_, sCur_;
     uint16_t loopLen_, loopRel_;
     int32_t loopPos_, loopRate_;
     volatile int32_t loopTarget_;
@@ -683,7 +686,8 @@ private:
     // stored word; while frozen the line is not written, so the encoded data stays exact (no generation loss)
     __attribute__((noinline)) M32_RAMFUNC void FreezeStart()
     {
-        sDec_ = dec_; sWord_ = decWord_; sPred_ = decPred_; sIdx_ = decIdx_; sStep_ = decStep_; sPrev_ = prev_; sCur_ = cur_;
+        sDec_ = dec_; sWord_ = decWord_; sPred_ = decPred_; sIdx_ = decIdx_; sStep_ = decStep_;
+        sHm1_ = hm1_; sH0_ = h0_; sPrev_ = prev_; sCur_ = cur_;
         int32_t len = (int32_t)(w_ & ~3u) - (int32_t)dec_;
         if (len <= 0) len += kN;
         if (len < 4) len = 4;
@@ -697,7 +701,8 @@ private:
     // exactly where it stopped (and at the end of a loop pass, the loop starts again)
     __attribute__((noinline)) M32_RAMFUNC void DecoderRestore()
     {
-        dec_ = sDec_; decWord_ = sWord_; decPred_ = sPred_; decIdx_ = sIdx_; decStep_ = sStep_; prev_ = sPrev_; cur_ = sCur_;
+        dec_ = sDec_; decWord_ = sWord_; decPred_ = sPred_; decIdx_ = sIdx_; decStep_ = sStep_;
+        hm1_ = sHm1_; h0_ = sH0_; prev_ = sPrev_; cur_ = sCur_;
     }
 
     // one output sample of the frozen loop at speed r (16.16), linear interpolation
@@ -728,7 +733,7 @@ private:
         int16_t i = decIdx_ + kImaIndex[n];
         decIdx_ = i < 0 ? 0 : (i > 88 ? 88 : i);
         decStep_ = kImaStep[decIdx_];
-        prev_ = cur_; cur_ = decPred_;
+        hm1_ = h0_; h0_ = prev_; prev_ = cur_; cur_ = decPred_;
         if (++dec_ >= kN) dec_ = 0;
     }
 
@@ -740,14 +745,23 @@ private:
         if (step > kMaxSlew) step = kMaxSlew; else if (step < -kMaxSlew) step = -kMaxSlew;
         delay_ += step;
 
-        // read position = w_ - delay_: samples a and a + 1, fraction f (16 bits)
+        // read position = w_ - delay_: between samples a and a + 1, fraction f (16 bits)
         int32_t whole = delay_ >> 16;
         uint32_t frac = (uint32_t)delay_ & 0xFFFF;
         int32_t a = (int32_t)w_ - whole - (frac ? 1 : 0);
         uint32_t f = frac ? 65536UL - frac : 0;
-        uint16_t need = Wrap(a + 2);                            // decode until dec_ == a + 2
-        for (uint16_t k = 0; dec_ != need && k < 4; k++) DecodeOne();   // normally 0 to 2 steps
-        return prev_ + (((cur_ - prev_) * (int32_t)(f >> 4)) >> 12);    // linear interpolation
+        uint16_t need = Wrap(a + 3);                            // decode until dec_ == a + 3 (a + 2 is the newest
+        for (uint16_t k = 0; dec_ != need && k < 4; k++) DecodeOne();   // sample used); normally 0 to 2 steps
+        // 4-point Hermite (Catmull-Rom) through samples a - 1 .. a + 2: unlike a linear blend it keeps the treble
+        // at fractional delay times, which matters because the loss would compound on every feedback repeat.
+        // Coefficients doubled to stay in integers, t in 1/2048: every intermediate stays under 1.5e9.
+        int32_t t = (int32_t)(f >> 5);
+        int32_t c1 = prev_ - hm1_;
+        int32_t c2 = 2 * hm1_ - 5 * h0_ + 4 * prev_ - cur_;
+        int32_t c3 = 3 * (h0_ - prev_) + cur_ - hm1_;
+        int32_t v = ((c3 * t) >> 11) + c2;
+        v = ((v * t) >> 11) + c1;
+        return h0_ + ((v * t) >> 12);                           // may overshoot 16 bits slightly; clamped downstream
     }
 
     // input minus feedback of the delayed sample (inverted feedback: each repeat flips polarity; rounded toward
