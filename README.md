@@ -106,7 +106,7 @@ is switched off, so only the jacks decide. GLIDE's ends and loop lock override t
 | **SHIFT** tapped alone (*Toggle quantize*) | Quantisation on/off with a quick tap; holding SHIFT doesn't toggle it (TEMPO LED green = on, red = off). |
 | **SHIFT** + lower-row key **1** to **8** | SCALE in steps: key *n* = *n* × 12.5% (key 8 = 100%). The key doesn't change the length or fire the envelope. |
 | **SHIFT** + **TEMPO** | SCALE: attenuation of KB, 0 to 100% (default 50%), shown on the key LEDs. SCALE jumps to the knob's position once you turn it. After you release SHIFT, the clock rate jumps back to TEMPO once you turn it again. |
-| **SHIFT** + **◀ / ▶** | Delay feedback, 25 levels, inverted (each repeat flips polarity): 0 = a single repeat, top = 100% (the loop holds forever and new input piles up into saturation). |
+| **SHIFT** + **◀ / ▶** | Delay feedback, 25 levels, inverted (each repeat flips polarity): 0 = a single repeat, top = 100% (the loop holds forever and new input piles up into saturation). Starts at 40% (four green LEDs). |
 | **RUN/STOP** (*Start/stop internal clock*) | Internal clock on/off. While on, incoming MIDI clock replaces it. |
 | **HOLD** (*Toggle locked loop*) | Loop lock on/off: each clock only rotates the bits, so the pattern repeats unchanged. |
 | **RESET**, **PATTERN** (*Unused*) | Not used while running. RESET held at power-up (with TEMPO fully anticlockwise and SUSTAIN off) enters update mode, see below. |
@@ -135,7 +135,7 @@ the next clock; releases act at once. Otherwise presses act at once.
 ### At power-up
 
 Nothing is saved between power cycles. Rungler-32 starts with the internal clock off, length 8 with
-random bits, SCALE 50%, quantisation on, no transpose, loop lock off and feedback at a single repeat.
+random bits, SCALE 50%, quantisation on, no transpose, loop lock off and feedback at 40%.
 
 ## Installing
 

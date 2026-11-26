@@ -39,7 +39,7 @@
 //    whose rate is modulated (e.g. by a slow LFO) gives chorus/vibrato, with the delay buffer frozen or not; the
 //    delay is that period times a fraction picked by GLIDE (1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 3/2, 2), halved
 //    until it fits in 0.51 s. RESET still feeds the shift register's XOR as well.
-//  - SHIFT + arrows: feedback (inverted: each repeat flips polarity), 25 levels (0 = single repeat ... 100%), shown on the octave LEDs while SHIFT is
+//  - SHIFT + arrows: feedback (inverted: each repeat flips polarity), 25 levels (0 = single repeat ... 100%; starts at 4 = 40%), shown on the octave LEDs while SHIFT is
 //    held and for 1.5 s after a change: a green bar (1-8), then yellow (9-16) and red (17-24) rolling in from
 //    the right; all red = 100% (the line then holds forever and new input piles up into saturation).
 //    Build with -DDELAY_NO_FEEDBACK for a version without internal feedback.
@@ -151,7 +151,7 @@ static int32_t kFeedbackQ12[kFbLevels + 1] = {
 class Rungler32 : public Mother32 {
 public:
     Rungler32()
-        : fbLevel_(0), w_(0), wAcc_(0), encPred_(0), encIdx_(0), encStep_(kImaStep[0]),
+        : fbLevel_(4), w_(0), wAcc_(0), encPred_(0), encIdx_(0), encStep_(kImaStep[0]),
           dec_(0), decWord_(0), decPred_(0), decIdx_(0), decStep_(kImaStep[0]), hm1_(0), h0_(0), prev_(0), cur_(0), delay_(0), frozen_(false), wasFrozen_(false), sDec_(0), sWord_(0), sPred_(0), sIdx_(0), sStep_(kImaStep[0]), sHm1_(0), sH0_(0), sPrev_(0), sCur_(0),
           loopLen_(4), loopRel_(0), loopPos_(0), loopRate_(65536L), loopTarget_(65536L), freezeDelay_(kMinDelay), targetDelay_(0), assignFoldK_(7570), assignFoldB_(52523),
           resetCnt_(0), resetSeen_(false), lastResetEdge_(0), syncPeriod_(0), periodQ4_(0), ringIdx_(0), histN_(0),
